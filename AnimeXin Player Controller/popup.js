@@ -23,12 +23,18 @@ class PopupController {
    */
   async init() {
     try {
-      this.setupEventListeners();
+        this.setupEventListeners();
       await this.getCurrentTab();
       
       if (this.isAnimeXinTab()) {
-        await this.loadCurrentSettings();
-        this.updateStatus('Connected to AnimeXin page', 'success');
+        const settingsLoaded = await this.loadCurrentSettings();
+        if (settingsLoaded && this.hasExistingSettings()) {
+          // Show option to override settings instead of auto-closing
+          this.updateStatus('Settings exist - click "Show Settings" to modify', 'success');
+          this.showSettingsOverride();
+        } else {
+          this.updateStatus('Connected to AnimeXin page', 'success');
+        }
       } else {
         this.updateStatus('Please navigate to an AnimeXin page', 'error');
         this.disableInputs();
@@ -68,8 +74,8 @@ class PopupController {
    */
   setupEventListeners() {
     try {
-      const saveBtn = document.getElementById('save-settings');
-      const openPageBtn = document.getElementById('open-page');
+    const saveBtn = document.getElementById('save-settings');
+    const openPageBtn = document.getElementById('open-page');
       const introInput = document.getElementById('intro-skip-start');
       const outroInput = document.getElementById('outro-start');
       const durationInput = document.getElementById('outro-skip-duration');
@@ -399,7 +405,15 @@ class PopupController {
         throw new Error(response?.error || 'Failed to load settings');
       }
 
-      const { series, introSkipStart, outroSkipDuration, outroStartSeconds } = response.data;
+        const { series, introSkipStart, outroSkipDuration, outroStartSeconds } = response.data;
+      
+      // Store settings for checking if they exist
+      this.currentSettings = {
+        series,
+        introSkipStart: introSkipStart || 0,
+        outroSkipDuration: outroSkipDuration || 0,
+        outroStartSeconds: outroStartSeconds || 0
+      };
       
       // Validate and display series
       const seriesInput = document.getElementById('series');
@@ -423,9 +437,77 @@ class PopupController {
       }
       
       this.updateStatus('Settings loaded successfully', 'success');
+      return true;
       
     } catch (error) {
       this.handleError('Failed to load settings', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if existing settings are configured
+   */
+  hasExistingSettings() {
+    if (!this.currentSettings) return false;
+    
+    const { introSkipStart, outroSkipDuration, outroStartSeconds } = this.currentSettings;
+    return introSkipStart > 0 || outroSkipDuration > 0 || outroStartSeconds > 0;
+  }
+
+  /**
+   * Show settings override option
+   */
+  showSettingsOverride() {
+    try {
+      // Hide all input fields initially
+      const content = document.querySelector('.content');
+      if (content) {
+        content.style.display = 'none';
+      }
+
+      // Create override button
+      const overrideDiv = document.createElement('div');
+      overrideDiv.id = 'settings-override';
+      overrideDiv.style.padding = '20px';
+      overrideDiv.style.textAlign = 'center';
+      
+      overrideDiv.innerHTML = `
+        <p style="margin-bottom: 16px; color: #e0e0e0;">
+          Settings already configured for this series:<br>
+          <strong>${this.currentSettings.series}</strong>
+        </p>
+        <button id="show-settings-btn" type="button" class="save-btn" style="margin-bottom: 10px;">
+          🛠️ Modify Settings
+        </button>
+        <button id="show-floating-ui-btn" type="button" class="save-btn">
+          📋 Show Floating Panel
+        </button>
+      `;
+
+      // Insert after header
+      const header = document.querySelector('.header');
+      if (header && header.nextSibling) {
+        header.parentNode.insertBefore(overrideDiv, header.nextSibling);
+      }
+
+      // Add event listeners
+      document.getElementById('show-settings-btn')?.addEventListener('click', () => {
+        overrideDiv.style.display = 'none';
+        if (content) content.style.display = 'block';
+      });
+
+      document.getElementById('show-floating-ui-btn')?.addEventListener('click', () => {
+        // Send message to show floating UI
+        this.sendMessageWithTimeout({
+          action: 'showFloatingUI'
+        }, 3000).then(() => {
+          window.close();
+        }).catch(console.error);
+      });
+
+    } catch (error) {
+      console.error('Settings override show failed:', error);
     }
   }
 

@@ -401,15 +401,21 @@ class AnimeXinPlayerController {
   handlePlay() {
     try {
       this.isPlaying = true;
-      this.requestFullscreen();
       
+      // Request fullscreen immediately
+      setTimeout(() => {
+        this.requestFullscreen();
+      }, 100);
+      
+      // Skip intro if configured
       if (this.introSkipStart > 0) {
         setTimeout(() => {
+          console.log(`Skipping intro to ${this.introSkipStart} seconds`);
           this.seekTo(this.introSkipStart);
           
           // Provide user feedback
           this.showUserNotification(`Skipped intro to ${this.formatTime(this.introSkipStart)}`);
-        }, 400);
+        }, 800); // Give player time to load
       }
     } catch (error) {
       this.errorReporter.reportError('Play handling failed', error);
@@ -460,7 +466,8 @@ class AnimeXinPlayerController {
         this.outroStartSeconds : 
         (this.outroSkipDuration > 0 ? (this.duration - this.outroSkipDuration) : 0);
       
-      if (outroStart > 0 && this.currentTime >= (outroStart - 0.35)) {
+      if (outroStart > 0 && this.currentTime >= (outroStart - 0.5)) {
+        console.log(`Outro detected at ${this.currentTime}s, navigating to next episode...`);
         this.showUserNotification('Outro detected, navigating to next episode...');
         this.navigateToNextEpisode();
       }
@@ -565,7 +572,13 @@ class AnimeXinPlayerController {
 
   createFloatingUI() {
     try {
-      this.floatingUI = new FloatingUI(this, this.currentSeries);
+      // Only show floating UI if no settings exist for this series
+      if (this.introSkipStart === 0 && this.outroStartSeconds === 0 && this.outroSkipDuration === 0) {
+        this.floatingUI = new FloatingUI(this, this.currentSeries);
+        console.log('No settings found for series, showing floating UI');
+      } else {
+        console.log('Settings exist for series, hiding floating UI');
+      }
     } catch (error) {
       this.errorReporter.reportError('Floating UI creation failed', error);
     }
@@ -635,6 +648,11 @@ class AnimeXinPlayerController {
       }
       
       this.showUserNotification('Settings saved successfully!');
+      
+      // Hide floating UI after saving
+      if (this.floatingUI && this.floatingUI.element) {
+        this.floatingUI.element.style.display = 'none';
+      }
     } catch (error) {
       this.errorReporter.reportError('Settings update failed', error);
     }
@@ -679,6 +697,16 @@ class AnimeXinPlayerController {
                 request.data.outroSkipDuration,
                 request.data.outroStartSeconds
               );
+              sendResponse({ success: true });
+              break;
+
+            case 'showFloatingUI':
+              // Force show floating UI even if settings exist
+              if (!this.floatingUI) {
+                this.floatingUI = new FloatingUI(this, this.currentSeries);
+              } else if (this.floatingUI.element) {
+                this.floatingUI.element.style.display = 'block';
+              }
               sendResponse({ success: true });
               break;
 
