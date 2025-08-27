@@ -158,7 +158,7 @@ class AnimeXinPlayerController {
       if (!select.__animexinBound) {
         select.addEventListener('change', () => {
           if (!this.serverPreferAttempted) this.userServerOverride = true;
-        }, { passive: true });
+        }, { passive: true, once: false });
         select.__animexinBound = true;
       }
 
@@ -208,12 +208,15 @@ class AnimeXinPlayerController {
   }
 
   /**
-   * Enhanced player detection with better performance
+   * Enhanced player detection with better performance and caching
    */
   async findPlayer() {
     return new Promise((resolve, reject) => {
       const maxAttempts = 60;
       let attempts = 0;
+      let lastQueryTime = 0;
+      let cachedFrame = null;
+      let cachedVideo = null;
       
       const tick = () => {
         attempts++;
@@ -221,9 +224,18 @@ class AnimeXinPlayerController {
         try {
           this.tryPreferServer();
           
-          // Use more efficient selectors
-          this.playerFrame = document.querySelector('iframe[src*="dailymotion"]');
-          this.html5Video = document.querySelector('.player .video_view video, video#video');
+          // Cache DOM queries to reduce reflow - only query every 200ms
+          const now = performance.now();
+          if (now - lastQueryTime >= 200) {
+            // More targeted and efficient selectors
+            cachedFrame = document.querySelector('iframe[src*="dailymotion.com"]');
+            cachedVideo = document.querySelector('.player .video_view video') || 
+                         document.querySelector('video#video');
+            lastQueryTime = now;
+          }
+          
+          this.playerFrame = cachedFrame;
+          this.html5Video = cachedVideo;
           
           if (this.playerFrame || this.html5Video) {
             this.setupPlayer();
@@ -236,11 +248,12 @@ class AnimeXinPlayerController {
             return;
           }
           
-          // Use requestAnimationFrame for better performance
+          // Use requestAnimationFrame for better performance timing
           requestAnimationFrame(tick);
         } catch (error) {
           this.errorReporter.reportError('Player finding attempt failed', error);
-          setTimeout(tick, 250);
+          // Fallback to setTimeout with longer delay on error
+          setTimeout(tick, 500);
         }
       };
       
@@ -277,6 +290,7 @@ class AnimeXinPlayerController {
         this.html5Video.setAttribute('aria-label', 'Anime episode video');
         
         const v = this.html5Video;
+        // Use passive listeners for all video events to improve scroll performance
         v.addEventListener('play', () => this.handlePlay(), { passive: true });
         v.addEventListener('pause', () => this.handlePause(), { passive: true });
         v.addEventListener('timeupdate', () => this.handleTimeUpdate({ currentTime: v.currentTime }), { passive: true });
@@ -295,20 +309,31 @@ class AnimeXinPlayerController {
   }
 
   /**
-   * Optimized player monitoring
+   * Optimized player monitoring with better performance
    */
   startPlayerMonitoring() {
     let lastTime = 0;
+    let rafId = null;
+    let monitoringActive = true;
     
     const monitor = () => {
-      if (!this.playerReady) return;
+      if (!monitoringActive || !this.playerReady) {
+        if (monitoringActive) {
+          rafId = requestAnimationFrame(monitor);
+        }
+        return;
+      }
       
-      // Throttle updates to avoid excessive API calls
+      // More efficient throttling using performance.now()
       const now = performance.now();
-      if (now - lastTime < 950) return; // ~1 second throttle
+      if (now - lastTime < 1000) { // Exactly 1 second throttle
+        rafId = requestAnimationFrame(monitor);
+        return;
+      }
       lastTime = now;
       
       try {
+        // Batch DOM operations to avoid multiple reflows
         if (this.playerFrame && this.isPlaying) {
           this.sendPlayerCommand('get_current_time');
         }
@@ -319,10 +344,20 @@ class AnimeXinPlayerController {
       } catch (error) {
         this.errorReporter.reportError('Player monitoring failed', error);
       }
+      
+      rafId = requestAnimationFrame(monitor);
     };
 
-    // Use setInterval with performance monitoring
-    setInterval(monitor, 1000);
+    // Use requestAnimationFrame for better performance
+    rafId = requestAnimationFrame(monitor);
+    
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+      monitoringActive = false;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+    }, { passive: true });
   }
 
   /**
@@ -585,48 +620,89 @@ class AnimeXinPlayerController {
   }
 
   /**
-   * Enhanced monitoring with performance optimization
+   * Enhanced monitoring with performance optimization and throttling
    */
   startMonitoring() {
     try {
-      // Use passive observers for better performance
-      const observer = new MutationObserver((mutations) => {
-        // Batch DOM changes for better performance
-        let shouldCheck = false;
-        
-        for (const mutation of mutations) {
-          if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-            shouldCheck = true;
-            break;
-          }
+      let isProcessing = false;
+      let pendingCheck = false;
+      
+      // Throttled mutation processing to avoid excessive DOM queries
+      const processChanges = () => {
+        if (isProcessing) {
+          pendingCheck = true;
+          return;
         }
         
-        if (!shouldCheck) return;
+        isProcessing = true;
+        pendingCheck = false;
         
-        try {
-          this.tryPreferServer();
-          
-          const dm = document.querySelector('iframe[src*="dailymotion"]');
-          const vid = document.querySelector('.player .video_view video, video#video');
-          
-          if (dm && dm !== this.playerFrame) {
-            this.playerFrame = dm;
-            this.html5Video = null;
-            this.setupPlayer();
-          } else if (vid && vid !== this.html5Video) {
-            this.html5Video = vid;
-            this.playerFrame = null;
-            this.setupPlayer();
+        // Use requestAnimationFrame to batch DOM operations
+        requestAnimationFrame(() => {
+          try {
+            this.tryPreferServer();
+            
+            // Cache previous elements to avoid unnecessary queries
+            const dm = document.querySelector('iframe[src*="dailymotion"]');
+            const vid = document.querySelector('.player .video_view video, video#video');
+            
+            if (dm && dm !== this.playerFrame) {
+              this.playerFrame = dm;
+              this.html5Video = null;
+              this.setupPlayer();
+            } else if (vid && vid !== this.html5Video) {
+              this.html5Video = vid;
+              this.playerFrame = null;
+              this.setupPlayer();
+            }
+          } catch (error) {
+            this.errorReporter.reportError('DOM monitoring failed', error);
+          } finally {
+            isProcessing = false;
+            if (pendingCheck) {
+              setTimeout(processChanges, 16); // ~60fps throttle
+            }
           }
-        } catch (error) {
-          this.errorReporter.reportError('DOM monitoring failed', error);
+        });
+      };
+
+      // Optimized MutationObserver with filtered targets
+      const observer = new MutationObserver((mutations) => {
+        // More efficient filtering - only check relevant mutations
+        const hasRelevantChanges = mutations.some(mutation => {
+          if (mutation.type !== 'childList') return false;
+          
+          // Check if any added nodes might contain players
+          return Array.from(mutation.addedNodes).some(node => {
+            if (node.nodeType !== Node.ELEMENT_NODE) return false;
+            const el = node;
+            
+            // More specific checks to reduce false positives
+            return el.tagName === 'IFRAME' || 
+                   el.tagName === 'VIDEO' ||
+                   el.classList?.contains('player') ||
+                   el.querySelector?.('iframe[src*="dailymotion"], video');
+          });
+        });
+        
+        if (hasRelevantChanges) {
+          processChanges();
         }
       });
 
+      // More targeted observation to reduce mutation volume
       observer.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        attributes: false, // Reduce noise from attribute changes
+        characterData: false // Reduce noise from text changes
       });
+      
+      // Cleanup observer on page unload
+      window.addEventListener('beforeunload', () => {
+        observer.disconnect();
+      }, { passive: true });
+      
     } catch (error) {
       this.errorReporter.reportError('Monitoring setup failed', error);
     }

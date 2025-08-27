@@ -15,6 +15,9 @@ class PopupController {
     this.validationTimeout = null;
     this.isLoading = false;
     
+    // Cache DOM elements to avoid repeated queries
+    this.domCache = new Map();
+    
     this.init();
   }
 
@@ -371,11 +374,40 @@ class PopupController {
   }
 
   /**
-   * Debounced validation for performance
+   * Optimized debounced validation with requestIdleCallback
    */
   debounceValidation(validationFn, delay = 300) {
     clearTimeout(this.validationTimeout);
-    this.validationTimeout = setTimeout(validationFn, delay);
+    
+    this.validationTimeout = setTimeout(() => {
+      // Use requestIdleCallback for non-critical validation work
+      if (window.requestIdleCallback) {
+        requestIdleCallback(validationFn, { timeout: 1000 });
+      } else {
+        // Fallback for browsers without requestIdleCallback
+        requestAnimationFrame(validationFn);
+      }
+    }, delay);
+  }
+
+  /**
+   * Efficiently get DOM element with caching
+   */
+  getElement(id) {
+    if (!this.domCache.has(id)) {
+      const element = document.getElementById(id);
+      if (element) {
+        this.domCache.set(id, element);
+      }
+    }
+    return this.domCache.get(id) || null;
+  }
+
+  /**
+   * Clear DOM cache when needed
+   */
+  clearDOMCache() {
+    this.domCache.clear();
   }
 
   /**
@@ -415,16 +447,16 @@ class PopupController {
         outroStartSeconds: outroStartSeconds || 0
       };
       
-      // Validate and display series
-      const seriesInput = document.getElementById('series');
+      // Validate and display series using cached elements
+      const seriesInput = this.getElement('series');
       if (seriesInput) {
         seriesInput.value = this.sanitizeDisplayText(series) || 'Unknown';
       }
       
-      // Validate and display settings
-      const introInput = document.getElementById('intro-skip-start');
-      const outroInput = document.getElementById('outro-start');
-      const durationInput = document.getElementById('outro-skip-duration');
+      // Validate and display settings using cached elements
+      const introInput = this.getElement('intro-skip-start');
+      const outroInput = this.getElement('outro-start');
+      const durationInput = this.getElement('outro-skip-duration');
       
       if (introInput) {
         introInput.value = this.formatTime(introSkipStart || 0);
@@ -543,16 +575,17 @@ class PopupController {
   }
 
   /**
-   * Enhanced loading state management
+   * Enhanced loading state management with cached elements
    */
   setLoadingState(loading) {
     this.isLoading = loading;
     
-    const saveBtn = document.getElementById('save-settings');
+    const saveBtn = this.getElement('save-settings');
     const buttonText = saveBtn?.querySelector('.button-text');
     
     if (!saveBtn) return;
     
+    // Batch DOM operations to avoid multiple reflows
     if (loading) {
       saveBtn.disabled = true;
       saveBtn.classList.add('loading');
@@ -567,11 +600,11 @@ class PopupController {
   }
 
   /**
-   * Enhanced notification system
+   * Enhanced notification system with cached elements
    */
   showNotification(message, type = 'info', duration = 3000) {
     try {
-      const notification = document.getElementById('notification');
+      const notification = this.getElement('notification');
       if (!notification) return;
       
       // Clear existing timeout
@@ -582,6 +615,7 @@ class PopupController {
       // Sanitize message
       const sanitizedMessage = this.sanitizeDisplayText(message);
       
+      // Batch DOM updates to avoid multiple reflows
       notification.textContent = sanitizedMessage;
       notification.className = `notification ${type}`;
       notification.style.display = 'block';
@@ -600,17 +634,18 @@ class PopupController {
   }
 
   /**
-   * Enhanced status updates with accessibility
+   * Enhanced status updates with accessibility and cached elements
    */
   updateStatus(message, type = 'info') {
     try {
-      const statusContainer = document.getElementById('status-container');
-      const statusText = document.getElementById('status-text');
+      const statusContainer = this.getElement('status-container');
+      const statusText = this.getElement('status-text');
       
       if (!statusContainer || !statusText) return;
       
       const sanitizedMessage = this.sanitizeDisplayText(message);
       
+      // Batch DOM operations to avoid multiple reflows
       statusText.textContent = sanitizedMessage;
       statusContainer.className = `status ${type}`;
       
@@ -681,11 +716,11 @@ class PopupController {
   }
 
   /**
-   * Screen reader announcements
+   * Screen reader announcements with cached elements
    */
   announceToScreenReader(message) {
     try {
-      const announcements = document.getElementById('announcements');
+      const announcements = this.getElement('announcements');
       if (!announcements) return;
       
       const sanitizedMessage = this.sanitizeDisplayText(message);

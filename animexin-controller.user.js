@@ -25,7 +25,8 @@
             position: fixed;
             top: 20px;
             right: 20px;
-            width: 300px;
+            width: 320px;
+            max-width: calc(100vw - 40px);
             background: rgba(26, 26, 26, 0.95);
             border: 2px solid #667eea;
             border-radius: 15px;
@@ -36,6 +37,11 @@
             color: #ffffff;
             transition: all 0.3s ease;
             overflow: hidden;
+            /* Performance optimizations */
+            will-change: transform;
+            contain: layout style paint;
+            transform: translateZ(0);
+            isolation: isolate;
         }
 
         #animexin-floating-ui:hover {
@@ -128,6 +134,9 @@
             cursor: pointer;
             transition: all 0.2s ease;
             margin-bottom: 15px;
+            /* Performance optimization */
+            will-change: transform;
+            transform: translateZ(0);
         }
 
         .animexin-save-btn:hover {
@@ -151,11 +160,24 @@
             cursor: pointer;
             text-align: center;
             transition: all 0.2s ease;
+            /* Performance optimization */
+            will-change: transform;
+            transform: translateZ(0);
         }
 
         .animexin-next-btn:hover {
             transform: translateY(-1px);
             box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+        }
+
+        /* Input performance optimization */
+        .animexin-input-group input {
+            contain: layout style;
+        }
+
+        /* Notification performance optimization */
+        .animexin-notification {
+            contain: layout style paint;
         }
 
         @media (max-width: 768px) {
@@ -199,14 +221,19 @@
             this.serverPreferAttempted = false;
             this.userServerOverride = false;
             
+            // Performance optimization - track cleanup functions
+            this.cleanupFunctions = [];
+            
             this.init();
         }
 
         /**
-         * Initialize the controller
+         * Initialize the controller with performance monitoring
          */
         async init() {
             try {
+                const startTime = performance.now();
+                
                 // Load settings from Tampermonkey storage
                 await this.loadSettings();
                 
@@ -219,10 +246,30 @@
                 // Start monitoring
                 this.startMonitoring();
                 
-                console.log('AnimeXin Player Controller initialized');
+                // Setup cleanup on page unload
+                this.setupCleanup();
+                
+                const endTime = performance.now();
+                console.log(`AnimeXin Player Controller initialized in ${(endTime - startTime).toFixed(2)}ms`);
             } catch (error) {
                 console.error('Failed to initialize controller:', error);
             }
+        }
+
+        /**
+         * Setup cleanup for better memory management
+         */
+        setupCleanup() {
+            const cleanup = () => {
+                this.cleanupFunctions.forEach(fn => {
+                    try { fn(); } catch (e) { console.warn('Cleanup error:', e); }
+                });
+            };
+            
+            window.addEventListener('beforeunload', cleanup, { passive: true });
+            this.cleanupFunctions.push(() => {
+                window.removeEventListener('beforeunload', cleanup);
+            });
         }
 
         /**
@@ -272,66 +319,188 @@
         }
 
         /**
-         * Find Dailymotion player iframe
+         * Enhanced player detection with performance optimization and caching
          */
         async findPlayer() {
             return new Promise((resolve, reject) => {
                 const maxAttempts = 60;
                 let attempts = 0;
+                let lastQueryTime = 0;
+                let cachedFrame = null;
+                let cachedVideo = null;
+                let rafId = null;
 
-                const findPlayerInterval = setInterval(() => {
+                const tick = () => {
                     attempts++;
-                    // Prefer servers while waiting
-                    this.tryPreferServer();
-                    // Look for DM iframe or HTML5 video
-                    this.playerFrame = document.querySelector('iframe[src*="dailymotion"]');
-                    this.html5Video = document.querySelector('.player .video_view video, video#video');
-
-                    if (this.playerFrame || this.html5Video) {
-                        clearInterval(findPlayerInterval);
-                        this.setupPlayer();
-                        resolve();
-                    } else if (attempts >= maxAttempts) {
-                        clearInterval(findPlayerInterval);
-                        reject(new Error('Player not found after maximum attempts'));
+                    
+                    try {
+                        this.tryPreferServer();
+                        
+                        // Cache DOM queries to reduce reflow - only query every 200ms
+                        const now = performance.now();
+                        if (now - lastQueryTime >= 200) {
+                            // More targeted and efficient selectors
+                            cachedFrame = document.querySelector('iframe[src*="dailymotion.com"]');
+                            cachedVideo = document.querySelector('.player .video_view video') || 
+                                         document.querySelector('video#video');
+                            lastQueryTime = now;
+                        }
+                        
+                        this.playerFrame = cachedFrame;
+                        this.html5Video = cachedVideo;
+                        
+                        if (this.playerFrame || this.html5Video) {
+                            if (rafId) cancelAnimationFrame(rafId);
+                            this.setupPlayer();
+                            resolve();
+                            return;
+                        }
+                        
+                        if (attempts >= maxAttempts) {
+                            if (rafId) cancelAnimationFrame(rafId);
+                            reject(new Error('Player not found after maximum attempts'));
+                            return;
+                        }
+                        
+                        // Use requestAnimationFrame for better performance timing
+                        rafId = requestAnimationFrame(tick);
+                    } catch (error) {
+                        console.error('Player finding attempt failed:', error);
+                        // Fallback to setTimeout with longer delay on error
+                        setTimeout(tick, 500);
                     }
-                }, 200);
+                };
+                
+                tick();
+                
+                // Add cleanup
+                this.cleanupFunctions.push(() => {
+                    if (rafId) cancelAnimationFrame(rafId);
+                });
             });
         }
 
         /**
-         * Setup player event listeners and communication
+         * Enhanced player setup with performance optimization and passive listeners
          */
         setupPlayer() {
-            // Listen for messages from Dailymotion player
-            if (this.playerFrame) {
-                window.addEventListener('message', this.handlePlayerMessage.bind(this));
-                this.playerFrame.addEventListener('load', () => {
+            try {
+                this.findNextEpisodeLink();
+
+                if (this.playerFrame) {
+                    // Add accessibility attributes
+                    this.playerFrame.setAttribute('aria-label', 'Video player');
+                    this.playerFrame.setAttribute('role', 'application');
+                    
+                    const messageHandler = this.handlePlayerMessage.bind(this);
+                    window.addEventListener('message', messageHandler, { passive: true });
+                    
+                    const loadHandler = () => {
+                        this.playerReady = true;
+                        this.attachPlayerListeners();
+                    };
+                    this.playerFrame.addEventListener('load', loadHandler, { passive: true });
+                    
+                    if (this.playerFrame.contentWindow) {
+                        this.playerReady = true;
+                        this.attachPlayerListeners();
+                    }
+                    
+                    // Add cleanup
+                    this.cleanupFunctions.push(() => {
+                        window.removeEventListener('message', messageHandler);
+                        this.playerFrame?.removeEventListener('load', loadHandler);
+                    });
+                }
+
+                if (this.html5Video) {
+                    // Add accessibility attributes
+                    this.html5Video.setAttribute('aria-label', 'Anime episode video');
+                    
+                    const v = this.html5Video;
+                    // Use passive listeners for all video events to improve scroll performance
+                    const playHandler = () => this.handlePlay();
+                    const pauseHandler = () => this.handlePause();
+                    const timeHandler = () => this.handleTimeUpdate({ currentTime: v.currentTime });
+                    const durationHandler = () => this.handleDurationChange({ duration: v.duration });
+                    const endedHandler = () => this.handleEnded();
+                    
+                    v.addEventListener('play', playHandler, { passive: true });
+                    v.addEventListener('pause', pauseHandler, { passive: true });
+                    v.addEventListener('timeupdate', timeHandler, { passive: true });
+                    v.addEventListener('durationchange', durationHandler, { passive: true });
+                    v.addEventListener('ended', endedHandler, { passive: true });
+                    
+                    if (!isNaN(v.duration)) this.duration = v.duration;
                     this.playerReady = true;
-                    this.attachPlayerListeners();
-                });
-                if (this.playerFrame.contentWindow) { this.playerReady = true; this.attachPlayerListeners(); }
+                    
+                    // Add cleanup
+                    this.cleanupFunctions.push(() => {
+                        v.removeEventListener('play', playHandler);
+                        v.removeEventListener('pause', pauseHandler);
+                        v.removeEventListener('timeupdate', timeHandler);
+                        v.removeEventListener('durationchange', durationHandler);
+                        v.removeEventListener('ended', endedHandler);
+                    });
+                }
+
+                // Start optimized monitoring with requestAnimationFrame
+                this.startPlayerMonitoring();
+            } catch (error) {
+                console.error('Player setup failed:', error);
             }
-            // HTML5 fallback
-            if (this.html5Video) {
-                const v = this.html5Video;
-                v.addEventListener('play', () => this.handlePlay());
-                v.addEventListener('pause', () => this.handlePause());
-                v.addEventListener('timeupdate', () => this.handleTimeUpdate({ currentTime: v.currentTime }));
-                v.addEventListener('durationchange', () => this.handleDurationChange({ duration: v.duration }));
-                v.addEventListener('ended', () => this.handleEnded());
-                if (!isNaN(v.duration)) this.duration = v.duration;
-                this.playerReady = true;
-            }
-            // Find next episode link
-            this.findNextEpisodeLink();
-            // Poll loop
-            setInterval(() => {
-                if (!this.playerReady) return;
-                if (this.playerFrame && this.isPlaying) this.sendPlayerCommand('get_current_time');
-                if (this.html5Video && this.isPlaying) this.currentTime = this.html5Video.currentTime || 0;
-                this.checkOutroSkip();
-            }, 1000);
+        }
+
+        /**
+         * Optimized player monitoring with better performance
+         */
+        startPlayerMonitoring() {
+            let lastTime = 0;
+            let rafId = null;
+            let monitoringActive = true;
+            
+            const monitor = () => {
+                if (!monitoringActive || !this.playerReady) {
+                    if (monitoringActive) {
+                        rafId = requestAnimationFrame(monitor);
+                    }
+                    return;
+                }
+                
+                // More efficient throttling using performance.now()
+                const now = performance.now();
+                if (now - lastTime < 1000) { // Exactly 1 second throttle
+                    rafId = requestAnimationFrame(monitor);
+                    return;
+                }
+                lastTime = now;
+                
+                try {
+                    // Batch DOM operations to avoid multiple reflows
+                    if (this.playerFrame && this.isPlaying) {
+                        this.sendPlayerCommand('get_current_time');
+                    }
+                    if (this.html5Video && this.isPlaying) {
+                        this.currentTime = this.html5Video.currentTime || 0;
+                    }
+                    this.checkOutroSkip();
+                } catch (error) {
+                    console.error('Player monitoring failed:', error);
+                }
+                
+                rafId = requestAnimationFrame(monitor);
+            };
+
+            // Use requestAnimationFrame for better performance
+            rafId = requestAnimationFrame(monitor);
+            
+            // Cleanup
+            this.cleanupFunctions.push(() => {
+                monitoringActive = false;
+                if (rafId) {
+                    cancelAnimationFrame(rafId);
+                }
+            });
         }
 
         /**
@@ -351,24 +520,13 @@
             try {
                 this.sendPlayerCommand('get_duration');
                 this.sendPlayerCommand('get_player_state');
-                this.monitorPlayerState();
             } catch (error) {
                 console.error('Failed to attach player listeners:', error);
                 this.retryWithBackoff(() => this.attachPlayerListeners());
             }
         }
 
-        /**
-         * Monitor player state changes
-         */
-        monitorPlayerState() {
-            // Check player state every second
-            setInterval(() => {
-                if (this.playerFrame && this.isPlaying) {
-                    this.sendPlayerCommand('get_current_time');
-                }
-            }, 1000);
-        }
+
 
         /**
          * Handle messages from Dailymotion player
@@ -589,28 +747,92 @@
         }
 
         /**
-         * Start monitoring for changes
+         * Enhanced monitoring with performance optimization and throttling
          */
         startMonitoring() {
-            // Monitor for dynamic content changes
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    if (mutation.type === 'childList') {
-                        // Prefer server when dropdown appears
-                        this.tryPreferServer();
-                        // Re-attach to new player
-                        const dm = document.querySelector('iframe[src*="dailymotion"]');
-                        const vid = document.querySelector('.player .video_view video, video#video');
-                        if (dm && dm !== this.playerFrame) { this.playerFrame = dm; this.html5Video = null; this.setupPlayer(); }
-                        else if (vid && vid !== this.html5Video) { this.html5Video = vid; this.playerFrame = null; this.setupPlayer(); }
+            try {
+                let isProcessing = false;
+                let pendingCheck = false;
+                
+                // Throttled mutation processing to avoid excessive DOM queries
+                const processChanges = () => {
+                    if (isProcessing) {
+                        pendingCheck = true;
+                        return;
+                    }
+                    
+                    isProcessing = true;
+                    pendingCheck = false;
+                    
+                    // Use requestAnimationFrame to batch DOM operations
+                    requestAnimationFrame(() => {
+                        try {
+                            this.tryPreferServer();
+                            
+                            // Cache previous elements to avoid unnecessary queries
+                            const dm = document.querySelector('iframe[src*="dailymotion"]');
+                            const vid = document.querySelector('.player .video_view video, video#video');
+                            
+                            if (dm && dm !== this.playerFrame) {
+                                this.playerFrame = dm;
+                                this.html5Video = null;
+                                this.setupPlayer();
+                            } else if (vid && vid !== this.html5Video) {
+                                this.html5Video = vid;
+                                this.playerFrame = null;
+                                this.setupPlayer();
+                            }
+                        } catch (error) {
+                            console.error('DOM monitoring failed:', error);
+                        } finally {
+                            isProcessing = false;
+                            if (pendingCheck) {
+                                setTimeout(processChanges, 16); // ~60fps throttle
+                            }
+                        }
+                    });
+                };
+
+                // Optimized MutationObserver with filtered targets
+                const observer = new MutationObserver((mutations) => {
+                    // More efficient filtering - only check relevant mutations
+                    const hasRelevantChanges = mutations.some(mutation => {
+                        if (mutation.type !== 'childList') return false;
+                        
+                        // Check if any added nodes might contain players
+                        return Array.from(mutation.addedNodes).some(node => {
+                            if (node.nodeType !== Node.ELEMENT_NODE) return false;
+                            const el = node;
+                            
+                            // More specific checks to reduce false positives
+                            return el.tagName === 'IFRAME' || 
+                                   el.tagName === 'VIDEO' ||
+                                   el.classList?.contains('player') ||
+                                   el.querySelector?.('iframe[src*="dailymotion"], video');
+                        });
+                    });
+                    
+                    if (hasRelevantChanges) {
+                        processChanges();
                     }
                 });
-            });
 
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
+                // More targeted observation to reduce mutation volume
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    attributes: false, // Reduce noise from attribute changes
+                    characterData: false // Reduce noise from text changes
+                });
+                
+                // Cleanup observer
+                this.cleanupFunctions.push(() => {
+                    observer.disconnect();
+                });
+                
+            } catch (error) {
+                console.error('Monitoring setup failed:', error);
+            }
         }
 
         /**
@@ -627,23 +849,70 @@
             }
         }
 
-        /** Prefer server: EN Dailymotion > EN Ok.ru */
+        /**
+         * Enhanced server preference with better error handling and performance
+         */
         tryPreferServer() {
-            const select = document.querySelector('select.mirror');
-            if (!select || this.serverPreferAttempted || this.userServerOverride) return;
-            if (!select.__animexinBound) {
-                select.addEventListener('change', () => { if (!this.serverPreferAttempted) this.userServerOverride = true; }, false);
-                select.__animexinBound = true;
+            try {
+                const select = document.querySelector('select.mirror');
+                if (!select || this.serverPreferAttempted || this.userServerOverride) return;
+
+                if (!select.__animexinBound) {
+                    const changeHandler = () => {
+                        if (!this.serverPreferAttempted) this.userServerOverride = true;
+                    };
+                    select.addEventListener('change', changeHandler, { passive: true, once: false });
+                    select.__animexinBound = true;
+                    
+                    // Add cleanup
+                    this.cleanupFunctions.push(() => {
+                        select.removeEventListener('change', changeHandler);
+                    });
+                }
+
+                const preferred = this.findPreferredOption(select);
+                if (preferred && preferred !== select.selectedOptions[0]) {
+                    select.value = preferred.value;
+                    const evt = new Event('change', { bubbles: true });
+                    select.dispatchEvent(evt);
+                }
+                this.serverPreferAttempted = true;
+            } catch (error) {
+                console.error('Server preference failed:', error);
             }
-            const opts = Array.from(select.options || []);
-            const norm = (t) => String(t || '').toLowerCase();
-            let preferred = opts.find(o => norm(o.textContent).includes('hardsub english dailymotion'));
-            if (!preferred) preferred = opts.find(o => { const t = norm(o.textContent); return t.includes('hardsub english') && (t.includes('ok.ru') || t.includes('ok')); });
-            if (preferred && preferred !== select.selectedOptions[0]) {
-                select.value = preferred.value;
-                select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        /**
+         * Find preferred server option with enhanced validation
+         */
+        findPreferredOption(select) {
+            try {
+                const opts = Array.from(select.options || []);
+                const norm = (text) => {
+                    if (!text || typeof text !== 'string') return '';
+                    return text.toLowerCase().replace(/\s+/g, ' ').trim();
+                };
+
+                // Priority 1: Hardsub English Dailymotion
+                let match = opts.find(o => {
+                    const text = norm(o.textContent);
+                    return text.includes('hardsub') && text.includes('english') && text.includes('dailymotion');
+                });
+                
+                if (match) return match;
+
+                // Priority 2: Hardsub English Ok.ru
+                match = opts.find(o => {
+                    const text = norm(o.textContent);
+                    return text.includes('hardsub') && text.includes('english') && 
+                           (text.includes('ok.ru') || text.includes('ok'));
+                });
+                
+                return match || null;
+            } catch (error) {
+                console.error('Server option finding failed:', error);
+                return null;
             }
-            this.serverPreferAttempted = true;
         }
     }
 
@@ -658,27 +927,58 @@
         }
 
         /**
-         * Create floating UI element
+         * Create floating UI element with CSP compliance
          */
         createUI() {
             this.element = document.createElement('div');
             this.element.id = 'animexin-floating-ui';
+            this.element.setAttribute('role', 'dialog');
+            this.element.setAttribute('aria-labelledby', 'animexin-title');
+            this.element.setAttribute('aria-describedby', 'animexin-description');
+            
             this.element.innerHTML = `
-                <div class="animexin-header">
-                    <span>AnimeXin (${this.controller.currentSeries})</span>
-                    <button class="animexin-close" onclick="this.parentElement.parentElement.style.display='none'">×</button>
+                <div class="animexin-header" role="banner">
+                    <span id="animexin-title" class="animexin-title">AnimeXin (${this.controller.currentSeries})</span>
+                    <button class="animexin-close" type="button" aria-label="Close settings panel" title="Close">×</button>
                 </div>
-                <div class="animexin-content">
+                <div class="animexin-content" role="main">
+                    <p id="animexin-description" style="position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden;">Configure intro and outro skip settings for ${this.controller.currentSeries}</p>
+                    
                     <div class="animexin-input-group">
-                        <label>Intro Start (mm:ss)</label>
-                        <input type="text" id="intro-skip-start" placeholder="e.g., 1:30" value="${this.formatTime(this.controller.introSkipStart)}">
+                        <label for="intro-skip-start">Intro Start (mm:ss)</label>
+                        <input type="text" 
+                               id="intro-skip-start" 
+                               placeholder="e.g., 1:30" 
+                               value="${this.formatTime(this.controller.introSkipStart)}"
+                               aria-describedby="intro-help"
+                               autocomplete="off">
+                        <small id="intro-help" style="font-size: 11px; color: #888; margin-top: 4px; display: block;">Time to skip to when episode starts</small>
                     </div>
+                    
                     <div class="animexin-input-group">
-                        <label>Outro Start (mm:ss)</label>
-                        <input type="text" id="outro-start" placeholder="e.g., 17:49" value="${this.formatTime(this.controller.outroStartSeconds)}">
+                        <label for="outro-start">Outro Start (mm:ss)</label>
+                        <input type="text" 
+                               id="outro-start" 
+                               placeholder="e.g., 17:49" 
+                               value="${this.formatTime(this.controller.outroStartSeconds)}"
+                               aria-describedby="outro-help"
+                               autocomplete="off">
+                        <small id="outro-help" style="font-size: 11px; color: #888; margin-top: 4px; display: block;">Time when outro begins</small>
                     </div>
-                    <button id="save-settings" class="animexin-save-btn">Save Settings</button>
-                    <div id="next-episode-btn" class="animexin-next-btn" style="display: none;">Next Episode</div>
+                    
+                    <button id="save-settings" 
+                            type="button" 
+                            class="animexin-save-btn"
+                            aria-describedby="save-help">Save Settings</button>
+                    <small id="save-help" style="font-size: 11px; color: #888; margin-top: 4px; display: block;">Saves settings for ${this.controller.currentSeries} episodes</small>
+                    
+                    <button id="next-episode-btn" 
+                            type="button" 
+                            class="animexin-next-btn" 
+                            style="display:none;"
+                            aria-label="Go to next episode">Next Episode</button>
+                    
+                    <div id="notification" style="display:none; padding: 8px 12px; margin: 8px 0; border-radius: 6px; font-size: 12px; background: #1a4d2e; color: #4caf50; border: 1px solid #2d5f3f;" role="status" aria-live="polite"></div>
                 </div>
             `;
 
@@ -687,23 +987,125 @@
         }
 
         /**
-         * Attach event listeners
+         * Attach event listeners with CSP compliance and accessibility
          */
         attachEventListeners() {
-            const saveBtn = this.element.querySelector('#save-settings');
-            const introInput = this.element.querySelector('#intro-skip-start');
-            const outroStartInput = this.element.querySelector('#outro-start');
-            const nextEpisodeBtn = this.element.querySelector('#next-episode-btn');
+            try {
+                const saveBtn = this.element.querySelector('#save-settings');
+                const introInput = this.element.querySelector('#intro-skip-start');
+                const outroStartInput = this.element.querySelector('#outro-start');
+                const nextBtn = this.element.querySelector('#next-episode-btn');
+                const closeBtn = this.element.querySelector('.animexin-close');
 
-            saveBtn.addEventListener('click', () => {
-                const introSeconds = this.parseTimeToSeconds(introInput.value);
-                const outroStartSeconds = this.parseTimeToSeconds(outroStartInput.value);
+                // CSP compliant event listeners (no onclick)
+                if (saveBtn) {
+                    saveBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        this.handleSave(introInput.value, outroStartInput.value);
+                    });
+                }
+
+                if (nextBtn) {
+                    nextBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        this.controller.navigateToNextEpisode();
+                    });
+                }
+
+                if (closeBtn) {
+                    closeBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        this.hide();
+                    });
+                }
+
+                // Input validation on change
+                [introInput, outroStartInput].forEach(input => {
+                    if (input) {
+                        input.addEventListener('input', (e) => {
+                            this.validateTimeInput(e.target);
+                        }, { passive: true });
+                    }
+                });
+
+                // Keyboard navigation
+                this.element.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        this.hide();
+                    }
+                }, { passive: true });
+
+            } catch (error) {
+                console.error('Event listener attachment failed:', error);
+            }
+        }
+
+        /**
+         * Handle save with validation
+         */
+        handleSave(introValue, outroValue) {
+            try {
+                const introSeconds = this.parseTimeToSeconds(introValue);
+                const outroStartSeconds = this.parseTimeToSeconds(outroValue);
+                
                 this.controller.updateSettings(introSeconds, this.controller.outroSkipDuration, outroStartSeconds);
-            });
+                
+                // Show success notification
+                this.showNotification('Settings saved successfully!');
+                
+            } catch (error) {
+                this.showNotification('Error saving settings. Please try again.', 'error');
+            }
+        }
 
-            nextEpisodeBtn.addEventListener('click', () => {
-                this.controller.navigateToNextEpisode();
-            });
+        /**
+         * Validate time input with visual feedback
+         */
+        validateTimeInput(input) {
+            try {
+                if (!input || !input.value) {
+                    input.style.borderColor = '';
+                    return;
+                }
+                
+                this.parseTimeToSeconds(input.value);
+                input.style.borderColor = '#4caf50';
+                
+            } catch (error) {
+                input.style.borderColor = '#f44336';
+            }
+        }
+
+        /**
+         * Show notification
+         */
+        showNotification(message, type = 'success') {
+            try {
+                const notification = this.element.querySelector('#notification');
+                if (!notification) return;
+                
+                notification.textContent = message;
+                notification.style.display = 'block';
+                
+                // Auto-hide after 3 seconds
+                setTimeout(() => {
+                    notification.style.display = 'none';
+                }, 3000);
+                
+            } catch (error) {
+                console.error('Notification failed:', error);
+            }
+        }
+
+        /**
+         * Hide the floating UI
+         */
+        hide() {
+            try {
+                this.element.style.display = 'none';
+            } catch (error) {
+                console.error('UI hide failed:', error);
+            }
         }
 
         /**
@@ -716,16 +1118,58 @@
             if (outroStartInput) outroStartInput.value = this.formatTime(outroStartSeconds);
         }
 
+        /**
+         * Enhanced time parsing with validation
+         */
         parseTimeToSeconds(value) {
-            if (!value) return 0;
-            if (/^\d+$/.test(value)) return Number(value);
-            const parts = String(value).trim().split(':');
-            if (parts.length === 2) {
-                const m = Number(parts[0]) || 0; const s = Number(parts[1]) || 0; return m * 60 + s;
-            } else if (parts.length === 3) {
-                const h = Number(parts[0]) || 0; const m = Number(parts[1]) || 0; const s = Number(parts[2]) || 0; return h * 3600 + m * 60 + s;
+            if (!value || typeof value !== 'string') return 0;
+            
+            // Remove any dangerous characters and normalize
+            const sanitized = value.replace(/[^\d:]/g, '');
+            if (!sanitized) return 0;
+            
+            // Direct number input
+            if (/^\d+$/.test(sanitized)) {
+                const num = parseInt(sanitized, 10);
+                if (num < 0 || num > 86400) { // Max 24 hours
+                    throw new Error('Time must be between 0 and 86400 seconds');
+                }
+                return num;
             }
-            return 0;
+            
+            // Time format validation
+            if (!/^(\d{1,2}:)?\d{1,2}:\d{2}$/.test(sanitized) && !/^\d{1,2}:\d{2}$/.test(sanitized)) {
+                throw new Error('Time must be in mm:ss or hh:mm:ss format');
+            }
+            
+            const parts = sanitized.split(':').map(p => {
+                const num = parseInt(p, 10);
+                if (isNaN(num)) throw new Error(`Invalid number: ${p}`);
+                return num;
+            });
+            
+            let totalSeconds = 0;
+            
+            if (parts.length === 2) {
+                // mm:ss format
+                const [minutes, seconds] = parts;
+                if (seconds >= 60) throw new Error('Seconds must be less than 60');
+                totalSeconds = minutes * 60 + seconds;
+            } else if (parts.length === 3) {
+                // hh:mm:ss format
+                const [hours, minutes, seconds] = parts;
+                if (minutes >= 60) throw new Error('Minutes must be less than 60');
+                if (seconds >= 60) throw new Error('Seconds must be less than 60');
+                totalSeconds = hours * 3600 + minutes * 60 + seconds;
+            } else {
+                throw new Error('Invalid time format');
+            }
+            
+            if (totalSeconds < 0 || totalSeconds > 86400) {
+                throw new Error('Time must be between 0 and 24 hours');
+            }
+            
+            return totalSeconds;
         }
 
         formatTime(seconds) {

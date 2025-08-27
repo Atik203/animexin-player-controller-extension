@@ -527,15 +527,39 @@
   }
 }
 
-/* Performance optimizations */
+/* Performance optimizations and containment */
 #animexin-floating-ui {
   will-change: transform;
   contain: layout style paint;
+  /* Enable hardware acceleration for better performance */
+  transform: translateZ(0);
+  /* Optimize rendering layers */
+  isolation: isolate;
 }
 
 .animexin-save-btn,
 .animexin-next-btn {
   will-change: transform;
+  /* Enable hardware acceleration for buttons */
+  transform: translateZ(0);
+}
+
+/* Optimize animations for better performance */
+.animexin-input-group input {
+  /* Contain layout changes to input elements */
+  contain: layout style;
+}
+
+/* Optimize notification animations */
+.animexin-notification {
+  /* Prevent reflows from notifications */
+  contain: layout style paint;
+}
+
+/* Memory optimization for large lists */
+.animexin-content {
+  /* Enable efficient scrolling if content overflows */
+  overscroll-behavior: contain;
 }
 
 /* Custom scrollbar for content overflow */
