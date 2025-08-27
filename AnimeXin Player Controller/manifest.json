@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "AnimeXin Player Controller",
+  "version": "1.2.0",
+  "description": "Automate intro/outro skipping and episode navigation for AnimeXin with smart server selection and mm:ss time format support",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": ["https://animexin.dev/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://animexin.dev/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AnimeXin Player Controller - Configure intro/outro settings"
+  },
+  "icons": {
+    "16": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTggMUMxMS44NjYgMSAxNSA0LjEzNCAxNSA4QzE1IDExLjg2NiAxMS44NjYgMTUgOCAxNUM0LjEzNCAxNSAxIDExLjg2NiAxIDhDMSA0LjEzNCA0LjEzNCAxIDggMVoiIGZpbGw9IiM2NjdlZWEiLz4KPHBhdGggZD0iTTYgNUwxMSA4TDYgMTFWNVoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo=",
+    "48": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTI0IDNDMzUuNTk4IDMgNDUgMTIuNDAyIDQ1IDI0QzQ1IDM1LjU5OCAzNS41OTggNDUgMjQgNDVDMTIuNDAyIDQ1IDMgMzUuNTk4IDMgMjRDMyAxMi40MDIgMTIuNDAyIDMgMjQgM1oiIGZpbGw9IiM2NjdlZWEiLz4KPHA+dGggZD0iTTE4IDE1TDMzIDI0TDE4IDMzVjE1WiIgZmlsbD0id2hpdGUiLz4KPC9zdmc+Cg==",
+    "128": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgdmlld0JveD0iMCAwIDEyOCAxMjgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik02NCA4Qzk0Ljk5OCA4IDEyMCAzMy4wMDIgMTIwIDY0QzEyMCA5NC45OTggOTQuOTk4IDEyMCA2NCAxMjBDMzMuMDAyIDEyMCA4IDk0Ljk5OCA4IDY0QzggMzMuMDAyIDMzLjAwMiA4IDY0IDhaIiBmaWxsPSIjNjY3ZWVhIi8+CjxwYXRoIGQ9Ik00OCA0MEw4OCA2NEw0OCA4OFY0MFoiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo="
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
