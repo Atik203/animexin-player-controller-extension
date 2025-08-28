@@ -3,14 +3,25 @@
   "name": "AnimeXin Player Controller",
   "version": "1.2.0",
   "description": "Automate intro/outro skipping and episode navigation for AnimeXin with smart server selection and mm:ss time format support",
-  "permissions": ["activeTab", "storage"],
-  "host_permissions": ["https://animexin.dev/*"],
+  "permissions": ["activeTab", "storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://animexin.dev/*",
+    "https://*.dailymotion.com/*",
+    "https://ok.ru/*",
+    "https://*.ok.ru/*",
+    "https://mega.nz/*",
+    "https://*.mega.nz/*",
+    "https://rumble.com/*",
+    "https://*.rumble.com/*"
+  ],
   "content_scripts": [
     {
       "matches": ["https://animexin.dev/*"],
       "js": ["content.js"],
       "css": ["styles.css"],
-      "run_at": "document_end"
+      "run_at": "document_end",
+      "all_frames": true,
+      "match_origin_as_fallback": true
     }
   ],
   "action": {

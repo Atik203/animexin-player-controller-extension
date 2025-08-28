@@ -198,7 +198,7 @@ Open browser console (F12) to see detailed logging:
 
 ### Chrome Extension Folder Structure
 
-```
+```text
 AnimeXin Player Controller/
 ├── manifest.json          # Extension configuration (Manifest V3)
 ├── content.js             # Main automation logic (505 lines)
@@ -221,7 +221,7 @@ When setting up the Chrome Extension, ensure your folder contains:
 
 ### Tampermonkey Userscript
 
-```
+```text
 ├── animexin-controller.user.js  # Complete userscript
 └── README.md                    # This file
 ```
@@ -259,49 +259,49 @@ If you encounter any issues or have questions:
 
 ---
 
-#### ✅ **Strengths**
+### ✅ Strengths
 
-**1. Modern Manifest V3 Compliance**
+#### 1. Modern Manifest V3 Compliance
 
 - Properly configured `manifest.json` with minimal permissions
 - Uses `chrome.runtime.onMessage` instead of deprecated APIs
 - Implements `host_permissions` for targeted site access
 
-**2. Robust Error Handling**
+#### 2. Robust Error Handling
 
 - Exponential backoff retry mechanism (industry standard)
 - Graceful degradation when APIs fail
 - Comprehensive try-catch blocks with meaningful logging
 
-**3. Performance Optimizations**
+#### 3. Performance Optimizations
 
 - Efficient DOM querying with specific selectors
 - Event delegation and proper cleanup
 - Minimal memory footprint with smart initialization
 
-**4. Cross-Platform Compatibility**
+#### 4. Cross-Platform Compatibility
 
 - Dual implementation (Extension + Userscript)
 - Supports multiple player types (iframe + HTML5)
 - Browser-agnostic JavaScript patterns
 
-**5. User Experience Excellence**
+#### 5. User Experience Excellence
 
 - Intuitive mm:ss time format parsing
 - Per-series settings persistence
 - Auto-server selection with user override respect
 - Responsive floating UI with modern CSS
 
-#### ⚠️ **Minor Areas for Enhancement**
+### ⚠️ Minor Areas for Enhancement
 
 1. **CSP Compliance**: Consider removing `onclick` handlers in favor of `addEventListener`
 2. **TypeScript Migration**: Would benefit from type safety for better maintainability
 3. **Unit Testing**: Add test coverage for time parsing and server selection logic
 4. **Accessibility**: ARIA labels could be enhanced for screen readers
 
-#### 🔧 **Technical Highlights**
+### 🔧 Technical Highlights
 
-**Smart Player Detection**
+#### Smart Player Detection
 
 ```javascript
 // Excellent fallback strategy
@@ -311,7 +311,7 @@ this.html5Video = document.querySelector(
 );
 ```
 
-**Intelligent URL Parsing**
+#### Intelligent URL Parsing
 
 ```javascript
 // Robust series extraction
@@ -319,7 +319,7 @@ const idx = base.indexOf("-episode-");
 return idx > 0 ? base.substring(0, idx) : base;
 ```
 
-**Advanced Time Format Handling**
+#### Advanced Time Format Handling
 
 ```javascript
 // Supports multiple input formats
@@ -330,7 +330,7 @@ if (parts.length === 2) {
 }
 ```
 
-### Code Quality Metrics
+## Code Quality Metrics
 
 | Metric              | Score | Notes                                   |
 | ------------------- | ----- | --------------------------------------- |
@@ -341,7 +341,7 @@ if (parts.length === 2) {
 | **Reliability**     | 9/10  | Excellent error handling                |
 | **Scalability**     | 8/10  | Easy to extend for new features         |
 
-### Production Readiness ✅
+## Production Readiness ✅
 
 This extension is **ready for Chrome Web Store publication** with these strengths:
 
@@ -360,8 +360,29 @@ This extension is **ready for Chrome Web Store publication** with these strength
 3. **Edge Add-ons**: Compatible as-is
 4. **Open Source**: Excellent candidate for GitHub/community contributions
 
-**Final Verdict**: This is **professional-grade extension development** that exceeds typical hobby project quality. The codebase demonstrates senior-level understanding of web extension architecture, user experience design, and production considerations.
+This is professional-grade extension development that exceeds typical hobby project quality. The codebase demonstrates senior-level understanding of web extension architecture, user experience design, and production considerations.
 
 ---
 
-**Happy anime watching! 🎬✨**
+Happy anime watching! 🎬✨
+
+---
+
+## 🆕 Recent Changes
+
+- Added iframe support for Dailymotion embeds via postMessage API per the official guide ([Dailymotion Embed Guide](https://developers.dailymotion.com/guides/embed/)).
+  - Ensures `api=1` and `origin` are present on the iframe URL.
+  - Subscribes to key events and normalizes payloads for reliable intro/outro handling.
+  - Sends multi-format seek/play/pause commands for broader compatibility.
+- Fullscreen behavior refined:
+  - Removed global page click trigger that could hijack controls.
+  - Fullscreen now activates on double‑click of the HTML5 video in the top page only.
+- Messaging reliability improvements:
+  - Content script message listener is registered as early as possible.
+  - Popup includes a one-time programmatic injection fallback and retry.
+- Manifest updates:
+  - `all_frames: true` for content scripts, `match_origin_as_fallback: true`.
+  - Added host permissions for common embed domains (e.g., `*.dailymotion.com`).
+  - Added `scripting` permission for fallback injection.
+
+If intro/outro skipping does not work on non-Dailymotion providers (ok.ru, mega, rumble), they may require provider‑specific APIs similar to Dailymotion.

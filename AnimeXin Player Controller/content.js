@@ -10,6 +10,9 @@
 
 class AnimeXinPlayerController {
   constructor() {
+    // Register message listener ASAP so popup can reach us immediately
+    this.setupMessageListener();
+
     this.currentSeries = this.getCurrentSeries();
     this.playerFrame = null;
     this.html5Video = null;
@@ -27,8 +30,11 @@ class AnimeXinPlayerController {
     this.playerReady = false;
     this.serverPreferAttempted = false;
     this.userServerOverride = false;
+    this.fullscreenRequested = false;
+    this.isTopFrame = window.top === window;
     this.performanceMonitor = new PerformanceMonitor();
     this.errorReporter = new ErrorReporter();
+    this.handleFirstUserGesture = this.handleFirstUserGesture.bind(this);
     
     this.init();
   }
@@ -277,11 +283,14 @@ class AnimeXinPlayerController {
         this.playerFrame.addEventListener('load', () => {
           this.playerReady = true;
           this.attachPlayerListeners();
+          // Initialize Dailymotion messaging compatibility
+          this.initDailymotionMessaging();
         }, { passive: true });
         
         if (this.playerFrame.contentWindow) {
           this.playerReady = true;
           this.attachPlayerListeners();
+          this.initDailymotionMessaging();
         }
       }
 
@@ -296,6 +305,13 @@ class AnimeXinPlayerController {
         v.addEventListener('timeupdate', () => this.handleTimeUpdate({ currentTime: v.currentTime }), { passive: true });
         v.addEventListener('durationchange', () => this.handleDurationChange({ duration: v.duration }), { passive: true });
         v.addEventListener('ended', () => this.handleEnded(), { passive: true });
+
+        // Only attach fullscreen gesture on top-frame HTML5 video
+        if (this.isTopFrame) {
+          v.addEventListener('dblclick', () => {
+            this.requestFullscreen();
+          }, { passive: true });
+        }
         
         if (!isNaN(v.duration)) this.duration = v.duration;
         this.playerReady = true;
@@ -305,6 +321,63 @@ class AnimeXinPlayerController {
       this.startPlayerMonitoring();
     } catch (error) {
       this.errorReporter.reportError('Player setup failed', error);
+    }
+  }
+
+  /**
+   * Dailymotion iframe compatibility: ensure API enabled and subscribe to events
+   */
+  initDailymotionMessaging() {
+    try {
+      if (!this.playerFrame || !this.isDailymotionFrame()) return;
+
+      // Ensure API and origin are present in iframe URL to enable postMessage API
+      this.ensureDailymotionApiEnabled(this.playerFrame);
+
+      const subscribe = (eventName) => {
+        const variants = [
+          { command: 'addEventListener', event: eventName },
+          { method: 'addEventListener', params: [eventName] }
+        ];
+        variants.forEach((payload) => {
+          try {
+            this.playerFrame.contentWindow.postMessage(payload, '*');
+          } catch (_) {}
+        });
+      };
+
+      ['apiready','play','pause','timeupdate','durationchange','ended'].forEach(subscribe);
+    } catch (error) {
+      this.errorReporter.reportError('Dailymotion messaging init failed', error);
+    }
+  }
+
+  isDailymotionFrame() {
+    try {
+      const src = this.playerFrame?.src || '';
+      return /dailymotion\.com/i.test(src);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  ensureDailymotionApiEnabled(iframe) {
+    try {
+      const url = new URL(iframe.src, window.location.href);
+      let changed = false;
+      if (!url.searchParams.has('api')) {
+        url.searchParams.set('api', '1');
+        changed = true;
+      }
+      if (!url.searchParams.has('origin')) {
+        url.searchParams.set('origin', window.location.origin);
+        changed = true;
+      }
+      if (changed) {
+        iframe.src = url.toString();
+      }
+    } catch (_) {
+      // Ignore if we can't parse or set
     }
   }
 
@@ -367,13 +440,37 @@ class AnimeXinPlayerController {
     try {
       const { origin, data } = event;
       
-      // Strict origin validation
-      if (!origin || !origin.includes('dailymotion.com')) return;
-      
-      // Validate data structure
-      if (!data || typeof data !== 'object' || !data.event) return;
-      
-      this.handlePlayerEvent(data);
+      // Strict origin validation for Dailymotion only
+      if (!origin || !/dailymotion\.com/i.test(origin)) return;
+
+      // Normalize incoming payloads from various Dailymotion formats
+      if (!data || typeof data !== 'object') return;
+
+      let normalized = null;
+      if (data.event) {
+        normalized = { event: data.event, data: data.data || data };
+      } else if (data.type) {
+        normalized = { event: data.type, data: data.data || data };
+      } else if (data.name) {
+        normalized = { event: data.name, data: data.data || data };
+      }
+
+      if (!normalized) return;
+
+      // Map common data fields
+      if (normalized.event === 'timeupdate') {
+        const t = (normalized.data && (normalized.data.time ?? normalized.data.currentTime ?? normalized.data.position))
+          ?? (typeof normalized.data === 'number' ? normalized.data : undefined);
+        if (typeof t === 'number') normalized.data = { time: t };
+      }
+      if (normalized.event === 'durationchange' || normalized.event === 'duration') {
+        const d = (normalized.data && (normalized.data.duration ?? normalized.data.length))
+          ?? (typeof normalized.data === 'number' ? normalized.data : undefined);
+        if (typeof d === 'number') normalized.data = { duration: d };
+        normalized.event = 'durationchange';
+      }
+
+      this.handlePlayerEvent(normalized);
     } catch (error) {
       this.errorReporter.reportError('Player message handling failed', error);
     }
@@ -436,12 +533,7 @@ class AnimeXinPlayerController {
   handlePlay() {
     try {
       this.isPlaying = true;
-      
-      // Request fullscreen immediately
-      setTimeout(() => {
-        this.requestFullscreen();
-      }, 100);
-      
+
       // Skip intro if configured
       if (this.introSkipStart > 0) {
         setTimeout(() => {
@@ -545,6 +637,59 @@ class AnimeXinPlayerController {
       if (!command || typeof command !== 'string') return;
       
       if (this.playerFrame && this.playerFrame.contentWindow) {
+        // Dailymotion multi-format command dispatch for compatibility
+        if (this.isDailymotionFrame()) {
+          const payloads = [];
+          switch (command) {
+            case 'seek': {
+              const time = data && typeof data.time === 'number' ? data.time : 0;
+              payloads.push(
+                { command: 'seek', time },
+                { method: 'seek', value: time },
+                { method: 'seek', params: [time] }
+              );
+              break;
+            }
+            case 'play':
+              payloads.push(
+                { command: 'play' },
+                { method: 'play' }
+              );
+              break;
+            case 'pause':
+              payloads.push(
+                { command: 'pause' },
+                { method: 'pause' }
+              );
+              break;
+            case 'get_current_time':
+              payloads.push(
+                { command: 'getCurrentTime' },
+                { method: 'getCurrentTime' }
+              );
+              break;
+            case 'get_duration':
+              payloads.push(
+                { command: 'getDuration' },
+                { method: 'getDuration' }
+              );
+              break;
+            case 'get_player_state':
+              payloads.push(
+                { command: 'getPlayerState' },
+                { method: 'getPlayerState' }
+              );
+              break;
+            default:
+              payloads.push({ command, data });
+          }
+          payloads.forEach(p => {
+            try { this.playerFrame.contentWindow.postMessage(p, '*'); } catch (_) {}
+          });
+          return;
+        }
+
+        // Default postMessage for other iframes (best-effort)
         const message = { command, data };
         this.playerFrame.contentWindow.postMessage(message, '*');
         return;
@@ -833,6 +978,8 @@ class AnimeXinPlayerController {
       this.retryWithBackoff(() => this.attachPlayerListeners());
     }
   }
+
+  // Removed global document click fullscreen arming to avoid hijacking controls
 }
 
 /**

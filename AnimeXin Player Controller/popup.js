@@ -429,9 +429,14 @@ class PopupController {
         throw new Error('No active tab available');
       }
 
-      const response = await this.sendMessageWithTimeout({
-        action: 'getSettings'
-      }, 5000);
+      let response;
+      try {
+        response = await this.sendMessageWithTimeout({ action: 'getSettings' }, 3000);
+      } catch (firstErr) {
+        // Fallback: programmatically inject content script then retry once
+        await this.ensureContentScriptInjected();
+        response = await this.sendMessageWithTimeout({ action: 'getSettings' }, 5000);
+      }
 
       if (!response || !response.success) {
         throw new Error(response?.error || 'Failed to load settings');
@@ -474,6 +479,24 @@ class PopupController {
     } catch (error) {
       this.handleError('Failed to load settings', error);
       return false;
+    }
+  }
+
+  /**
+   * Ensure content script is injected in the active tab (fallback)
+   */
+  async ensureContentScriptInjected() {
+    try {
+      if (!this.currentTab?.id) return;
+      // Only inject on animexin pages
+      if (!this.isAnimeXinTab()) return;
+      await chrome.scripting.executeScript({
+        target: { tabId: this.currentTab.id, allFrames: false },
+        files: ['content.js']
+      });
+    } catch (error) {
+      // Surface minimal info; the retry will still fail if injection didn't work
+      console.warn('Content script injection fallback failed:', error?.message || error);
     }
   }
 
