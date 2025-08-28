@@ -22,6 +22,12 @@
       "run_at": "document_end",
       "all_frames": true,
       "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["https://*.dailymotion.com/*", "https://dailymotion.com/*"],
+      "js": ["dm-bridge.js"],
+      "run_at": "document_end",
+      "all_frames": true
     }
   ],
   "action": {

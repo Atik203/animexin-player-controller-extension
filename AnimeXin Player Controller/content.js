@@ -32,9 +32,9 @@ class AnimeXinPlayerController {
     this.userServerOverride = false;
     this.fullscreenRequested = false;
     this.isTopFrame = window.top === window;
+    this.deferredFullscreen = false;
     this.performanceMonitor = new PerformanceMonitor();
     this.errorReporter = new ErrorReporter();
-    this.handleFirstUserGesture = this.handleFirstUserGesture.bind(this);
     
     this.init();
   }
@@ -439,38 +439,40 @@ class AnimeXinPlayerController {
   handlePlayerMessage(event) {
     try {
       const { origin, data } = event;
-      
-      // Strict origin validation for Dailymotion only
-      if (!origin || !/dailymotion\.com/i.test(origin)) return;
 
-      // Normalize incoming payloads from various Dailymotion formats
       if (!data || typeof data !== 'object') return;
 
-      let normalized = null;
-      if (data.event) {
-        normalized = { event: data.event, data: data.data || data };
-      } else if (data.type) {
-        normalized = { event: data.type, data: data.data || data };
-      } else if (data.name) {
-        normalized = { event: data.name, data: data.data || data };
+      // Path 1: Our DM bridge inside Dailymotion iframe
+      if (data.source === 'animexin-controller' && data.type === 'dm_bridge_event') {
+        const normalized = { event: data.event, data: data.data };
+        this.handlePlayerEvent(normalized);
+        return;
       }
 
-      if (!normalized) return;
-
-      // Map common data fields
-      if (normalized.event === 'timeupdate') {
-        const t = (normalized.data && (normalized.data.time ?? normalized.data.currentTime ?? normalized.data.position))
-          ?? (typeof normalized.data === 'number' ? normalized.data : undefined);
-        if (typeof t === 'number') normalized.data = { time: t };
+      // Path 2: Native Dailymotion embed events
+      if (origin && /dailymotion\.com/i.test(origin)) {
+        let normalized = null;
+        if (data.event) {
+          normalized = { event: data.event, data: data.data || data };
+        } else if (data.type) {
+          normalized = { event: data.type, data: data.data || data };
+        } else if (data.name) {
+          normalized = { event: data.name, data: data.data || data };
+        }
+        if (!normalized) return;
+        if (normalized.event === 'timeupdate') {
+          const t = (normalized.data && (normalized.data.time ?? normalized.data.currentTime ?? normalized.data.position))
+            ?? (typeof normalized.data === 'number' ? normalized.data : undefined);
+          if (typeof t === 'number') normalized.data = { time: t };
+        }
+        if (normalized.event === 'durationchange' || normalized.event === 'duration') {
+          const d = (normalized.data && (normalized.data.duration ?? normalized.data.length))
+            ?? (typeof normalized.data === 'number' ? normalized.data : undefined);
+          if (typeof d === 'number') normalized.data = { duration: d };
+          normalized.event = 'durationchange';
+        }
+        this.handlePlayerEvent(normalized);
       }
-      if (normalized.event === 'durationchange' || normalized.event === 'duration') {
-        const d = (normalized.data && (normalized.data.duration ?? normalized.data.length))
-          ?? (typeof normalized.data === 'number' ? normalized.data : undefined);
-        if (typeof d === 'number') normalized.data = { duration: d };
-        normalized.event = 'durationchange';
-      }
-
-      this.handlePlayerEvent(normalized);
     } catch (error) {
       this.errorReporter.reportError('Player message handling failed', error);
     }
@@ -542,6 +544,11 @@ class AnimeXinPlayerController {
           
           // Provide user feedback
           this.showUserNotification(`Skipped intro to ${this.formatTime(this.introSkipStart)}`);
+
+          // Best-effort fullscreen immediately after intro skip
+          setTimeout(() => {
+            this.requestFullscreen();
+          }, 150);
         }, 800); // Give player time to load
       }
     } catch (error) {
@@ -637,61 +644,21 @@ class AnimeXinPlayerController {
       if (!command || typeof command !== 'string') return;
       
       if (this.playerFrame && this.playerFrame.contentWindow) {
-        // Dailymotion multi-format command dispatch for compatibility
+        // Prefer our in-frame DM bridge if present
         if (this.isDailymotionFrame()) {
-          const payloads = [];
-          switch (command) {
-            case 'seek': {
-              const time = data && typeof data.time === 'number' ? data.time : 0;
-              payloads.push(
-                { command: 'seek', time },
-                { method: 'seek', value: time },
-                { method: 'seek', params: [time] }
-              );
-              break;
-            }
-            case 'play':
-              payloads.push(
-                { command: 'play' },
-                { method: 'play' }
-              );
-              break;
-            case 'pause':
-              payloads.push(
-                { command: 'pause' },
-                { method: 'pause' }
-              );
-              break;
-            case 'get_current_time':
-              payloads.push(
-                { command: 'getCurrentTime' },
-                { method: 'getCurrentTime' }
-              );
-              break;
-            case 'get_duration':
-              payloads.push(
-                { command: 'getDuration' },
-                { method: 'getDuration' }
-              );
-              break;
-            case 'get_player_state':
-              payloads.push(
-                { command: 'getPlayerState' },
-                { method: 'getPlayerState' }
-              );
-              break;
-            default:
-              payloads.push({ command, data });
-          }
-          payloads.forEach(p => {
-            try { this.playerFrame.contentWindow.postMessage(p, '*'); } catch (_) {}
-          });
+          const bridgeMessage = {
+            source: 'animexin-controller',
+            type: 'dm_bridge_command',
+            action: command,
+            data
+          };
+          try {
+            this.playerFrame.contentWindow.postMessage(bridgeMessage, '*');
+          } catch (_) {}
           return;
         }
-
-        // Default postMessage for other iframes (best-effort)
-        const message = { command, data };
-        this.playerFrame.contentWindow.postMessage(message, '*');
+        // Fallback: best-effort generic
+        this.playerFrame.contentWindow.postMessage({ command, data }, '*');
         return;
       }
 
@@ -723,15 +690,59 @@ class AnimeXinPlayerController {
       const el = this.playerFrame || this.html5Video;
       if (!el) return;
       
-      if (el.requestFullscreen) {
-        el.requestFullscreen();
-      } else if (el.webkitRequestFullscreen) {
-        el.webkitRequestFullscreen();
+      // If targeting an iframe, ensure allow attribute includes fullscreen
+      if (this.playerFrame) {
+        const currentAllow = this.playerFrame.getAttribute('allow') || '';
+        if (!/fullscreen/i.test(currentAllow)) {
+          const updated = currentAllow ? `${currentAllow}; fullscreen` : 'fullscreen';
+          this.playerFrame.setAttribute('allow', updated);
+          console.log('FS: set iframe allow ->', updated);
+        }
+      }
+
+      console.log('FS: attempting on', this.playerFrame ? 'iframe' : 'video');
+      const p = el.requestFullscreen ? el.requestFullscreen() : (el.webkitRequestFullscreen ? el.webkitRequestFullscreen() : null);
+      if (p && typeof p.then === 'function') {
+        p.then(() => {
+          console.log('FS: success');
+        }).catch((err) => {
+          console.log('FS: blocked ->', err?.message || err);
+          // Ask the Dailymotion bridge to request fullscreen inside the iframe
+          if (this.playerFrame && this.isDailymotionFrame()) {
+            try {
+              this.playerFrame.contentWindow.postMessage({
+                source: 'animexin-controller',
+                type: 'dm_bridge_command',
+                action: 'fullscreen'
+              }, '*');
+              console.log('FS: delegated to DM bridge');
+            } catch (_) {}
+          }
+          this.deferFullscreenOnGesture();
+        });
+      } else {
+        console.log('FS: legacy call issued');
       }
     } catch (error) {
-      // Fullscreen may be blocked by user - don't report as error
-      console.log('Fullscreen request failed (user may have blocked)');
+      console.log('FS: error ->', error?.message || error);
     }
+  }
+
+  deferFullscreenOnGesture() {
+    try {
+      if (this.deferredFullscreen) return;
+      this.deferredFullscreen = true;
+      console.log('FS: deferring until next user click');
+      const handler = () => {
+        this.deferredFullscreen = false;
+        console.log('FS: retry after gesture');
+        this.requestFullscreen();
+      };
+      document.addEventListener('click', handler, { once: true, capture: true });
+      if (this.playerFrame) {
+        this.playerFrame.addEventListener('click', handler, { once: true, capture: true });
+      }
+    } catch (_) {}
   }
 
   retryWithBackoff(operation) {
