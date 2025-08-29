@@ -74,6 +74,28 @@
             respond('current_time', t);
             break;
           }
+          case 'unmute': {
+            if (!v) return;
+            try {
+              v.muted = false;
+              if (typeof data?.volume === 'number') {
+                const vol = Math.max(0, Math.min(1, data.volume));
+                v.volume = vol;
+              }
+              v.play?.().catch(() => {});
+              respond('unmuted', { volume: v.volume, muted: v.muted });
+            } catch (_) {}
+            break;
+          }
+          case 'set_volume': {
+            if (!v) return;
+            try {
+              const vol = Math.max(0, Math.min(1, Number(data?.volume) || 1));
+              v.volume = vol;
+              respond('volume', { volume: v.volume });
+            } catch (_) {}
+            break;
+          }
           case 'get_current_time':
             if (v) respond('current_time', v.currentTime || 0);
             break;

@@ -549,6 +549,26 @@ class AnimeXinPlayerController {
           setTimeout(() => {
             this.requestFullscreen();
           }, 150);
+          
+          // Best-effort unmute after intro skip via DM bridge or HTML5
+          setTimeout(() => {
+            try {
+              if (this.playerFrame && this.isDailymotionFrame()) {
+                this.playerFrame.contentWindow.postMessage({
+                  source: 'animexin-controller',
+                  type: 'dm_bridge_command',
+                  action: 'unmute',
+                  data: { volume: 1 }
+                }, '*');
+                console.log('Audio: unmute requested via DM bridge');
+              } else if (this.html5Video) {
+                this.html5Video.muted = false;
+                this.html5Video.volume = 1;
+                this.html5Video.play().catch(() => {});
+                console.log('Audio: unmuted HTML5 video');
+              }
+            } catch (_) {}
+          }, 250);
         }, 800); // Give player time to load
       }
     } catch (error) {
