@@ -1,12 +1,12 @@
 # AnimeXin Player Controller
 
-A powerful Chrome Extension and Tampermonkey userscript that automates your anime watching experience on [AnimeXin](https://animexin.dev/) by automatically skipping intros/outros and navigating between episodes.
+A powerful Chrome Extension that automates your anime watching experience on [AnimeXin](https://animexin.dev/) by automatically skipping intros/outros and navigating between episodes.
 
 ## ✨ Features
 
 - **Automatic Intro Skipping**: Skip to a custom start time when episodes begin (supports mm:ss format)
 - **Automatic Outro Skipping**: Jump to the next episode before the outro starts
-- **Smart Server Selection**: Automatically prefers "Hardsub English Dailymotion" then "Hardsub English Ok.ru"
+- **Smart Server Selection**: Automatically prefers "Hardsub English Dailymotion", "All Player Sub", then "Hardsub English Ok.ru"
 - **Episode Navigation**: Automatically navigate to the next episode when available
 - **Fullscreen Automation**: Automatically request fullscreen when playback starts
 - **Per-Series Settings**: Store different intro/outro settings for each anime series (auto-detects series slug)
@@ -17,7 +17,7 @@ A powerful Chrome Extension and Tampermonkey userscript that automates your anim
 
 ## 🚀 Installation
 
-### Option 1: Chrome Extension (Recommended)
+### Chrome Extension Installation
 
 #### Step 1: Create Extension Folder
 
@@ -36,6 +36,7 @@ Download these files into your extension folder:
 - `popup.html`
 - `popup.js`
 - `styles.css`
+- `dm-bridge.js`
 
 #### Step 3: Install in Chrome
 
@@ -51,28 +52,6 @@ Download these files into your extension folder:
 - Navigate to any [AnimeXin](https://animexin.dev/) episode page
 - You should see a floating control panel in the top-right corner
 
-### Option 2: Tampermonkey Userscript
-
-#### Step 1: Install Tampermonkey
-
-- **Chrome**: [Tampermonkey on Chrome Web Store](https://chrome.google.com/webstore/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
-- **Firefox**: [Tampermonkey on Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/tampermonkey/)
-- **Edge**: [Tampermonkey on Microsoft Store](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd)
-
-#### Step 2: Install Script
-
-1. **Click the Tampermonkey icon** in your browser
-2. **Select "Create a new script"**
-3. **Delete the default template**
-4. **Copy and paste** the entire contents of `animexin-controller.user.js`
-5. **Save the script** (Ctrl+S or File → Save)
-
-#### Step 3: Verify Installation
-
-- Navigate to any [AnimeXin](https://animexin.dev/) episode page
-- You should see a floating control panel in the top-right corner
-- The script should automatically select preferred video servers
-
 ## 📖 Usage
 
 ### Initial Setup
@@ -82,21 +61,20 @@ Download these files into your extension folder:
    - Example: [Martial Master Episode 445](https://animexin.dev/martial-master-episode-445-indonesia-english-sub/)
    - Example: [Tales of Herding Gods Episode 44](https://animexin.dev/tales-of-herding-gods-episode-44-indonesia-english-sub/)
 
-2. **Extension Method**: Click the 🎬 extension icon or use the floating control panel
-3. **Userscript Method**: Use the floating control panel in the top-right corner
+2. **Click the 🎬 extension icon** or use the floating control panel
 
-4. **Configure Settings**:
+3. **Configure Settings**:
 
    - **Detected Series**: Shows auto-detected series (e.g., `martial-master`, `tales-of-herding-gods`)
    - **Intro Start**: Set in mm:ss format (e.g., `1:30` for 1 minute 30 seconds)
    - **Outro Start**: Set in mm:ss format (e.g., `17:49` for 17 minutes 49 seconds)
    - **Fallback Outro Duration**: Optional seconds-based fallback
 
-5. **Click "Save Settings"** to store your preferences per series
+4. **Click "Save Settings"** to store your preferences per series
 
 ### How It Works
 
-- **Server Selection**: Automatically selects "Hardsub English Dailymotion" (preferred) or "Hardsub English Ok.ru" (fallback)
+- **Server Selection**: Automatically selects "Hardsub English Dailymotion" (preferred), "All Player Sub" (for older videos), or "Hardsub English Ok.ru" (fallback)
 - **Intro Skipping**: When you press play, automatically seeks to your intro start time
 - **Outro Detection**: Monitors playback and automatically navigates to next episode at outro start time
 - **Episode Navigation**: Uses `rel="next"` links or shows a floating "Next Episode" button
@@ -126,18 +104,20 @@ Settings are automatically saved per anime series using smart URL parsing:
 
 ### Multi-Player Support
 
-The extension/script supports multiple player types:
+The extension supports multiple player types:
 
-- **Dailymotion iframe**: Uses postMessage API for commands (seek, get_current_time, etc.)
+- **Dailymotion iframe**: Uses custom bridge script (`dm-bridge.js`) injected into iframes for reliable control
 - **HTML5 video**: Direct DOM manipulation for `.player .video_view video` and `video#video` elements
 - **Dynamic switching**: Automatically detects and switches between player types
 
 ### Server Preference System
 
 - **Primary**: "Hardsub English Dailymotion" (best compatibility)
-- **Secondary**: "Hardsub English Ok.ru" (fallback option)
+- **Secondary**: "All Player Sub" (often Dailymotion for older videos)
+- **Tertiary**: "Hardsub English Ok.ru" (fallback option)
 - **Smart selection**: Only triggers once per page load, respects user manual changes
 - **DOM monitoring**: Reapplies preferences when server dropdown appears
+- **Auto-refresh**: If player doesn't load within 2 seconds, automatically toggles server selection to force reload
 
 ### Smart Series Detection
 
@@ -156,6 +136,7 @@ The extension/script supports multiple player types:
 
 - **Primary**: [animexin.dev](https://animexin.dev/) - All anime series and episodes
 - **Compatible**: Any site using embedded Dailymotion players with similar structure
+- **Players**: Dailymotion iframes (primary), HTML5 video (fallback)
 
 ## 🐛 Troubleshooting
 
@@ -165,7 +146,7 @@ The extension/script supports multiple player types:
 
    - Refresh the page
    - Check browser console for errors
-   - Ensure the script/extension is enabled
+   - Ensure the extension is enabled
 
 2. **Intro/outro skipping not working**
 
@@ -175,8 +156,7 @@ The extension/script supports multiple player types:
 
 3. **Settings not saving**
    - Check browser storage permissions
-   - For Tampermonkey, ensure GM_setValue/GM_getValue grants are enabled
-   - For Chrome Extension, check storage permissions in manifest
+   - Check storage permissions in manifest
 
 ### Debug Mode
 
@@ -196,16 +176,17 @@ Open browser console (F12) to see detailed logging:
 
 ## 📝 File Structure
 
-### Chrome Extension Folder Structure
+### Extension Folder Structure
 
 ```text
 AnimeXin Player Controller/
 ├── manifest.json          # Extension configuration (Manifest V3)
-├── content.js             # Main automation logic (505 lines)
+├── content.js             # Main automation logic
+├── dm-bridge.js           # Dailymotion iframe bridge script
 ├── popup.html             # Extension popup interface
 ├── popup.js               # Popup functionality & messaging
-├── styles.css             # Floating UI styles (224 lines)
-├── package.json           # Project metadata
+├── styles.css             # Floating UI styles
+├── background.js          # Background service worker
 └── README.md              # Documentation
 ```
 
@@ -215,16 +196,11 @@ When setting up the Chrome Extension, ensure your folder contains:
 
 - ✅ `manifest.json` - Extension manifest with permissions
 - ✅ `content.js` - Core functionality script
+- ✅ `dm-bridge.js` - Dailymotion iframe bridge
 - ✅ `popup.html` - Popup interface HTML
 - ✅ `popup.js` - Popup logic and communication
 - ✅ `styles.css` - UI styling for floating panel
-
-### Tampermonkey Userscript
-
-```text
-├── animexin-controller.user.js  # Complete userscript
-└── README.md                    # This file
-```
+- ✅ `background.js` - Background service worker
 
 ## 🤝 Contributing
 
@@ -243,7 +219,6 @@ This project is open source and available under the MIT License.
 
 - **AnimeXin** for providing the anime streaming platform
 - **Dailymotion** for their embeddable player API
-- **Tampermonkey** for the userscript platform
 - **Chrome Extensions** team for the extension framework
 
 ## 📞 Support
@@ -254,8 +229,6 @@ If you encounter any issues or have questions:
 2. **Review browser console logs** for error details
 3. **Open an issue** on the GitHub repository
 4. **Check browser compatibility** (Chrome 88+, Firefox 85+)
-
----
 
 ---
 
@@ -281,9 +254,9 @@ If you encounter any issues or have questions:
 
 #### 4. Cross-Platform Compatibility
 
-- Dual implementation (Extension + Userscript)
 - Supports multiple player types (iframe + HTML5)
 - Browser-agnostic JavaScript patterns
+- Reliable cross-origin iframe communication
 
 #### 5. User Experience Excellence
 
@@ -351,7 +324,7 @@ This extension is **ready for Chrome Web Store publication** with these strength
 - ✅ Comprehensive error handling
 - ✅ User privacy respected (local storage only)
 - ✅ Clean, maintainable codebase
-- ✅ Cross-browser userscript alternative
+- ✅ Reliable cross-origin iframe control
 
 ### Deployment Recommendations
 
@@ -370,19 +343,27 @@ Happy anime watching! 🎬✨
 
 ## 🆕 Recent Changes
 
-- Added iframe support for Dailymotion embeds via postMessage API per the official guide ([Dailymotion Embed Guide](https://developers.dailymotion.com/guides/embed/)).
+- **Server Selection Enhanced**:
+- - Added "All Player Sub" support for older videos that may not have "Hardsub English Dailymotion"
+- - Auto-refresh server selection if player doesn't load within 2 seconds
+- - Improved fallback chain: Dailymotion → All Player Sub → Ok.ru → Any Dailymotion
+- **Player Loading Improvements**:
+- - Wait for player to be seekable before attempting intro skip
+- - Prevents "video doesn't play" issues from seeking too early
+
+* Added iframe support for Dailymotion embeds via postMessage API per the official guide ([Dailymotion Embed Guide](https://developers.dailymotion.com/guides/embed/)).
   - Ensures `api=1` and `origin` are present on the iframe URL.
   - Subscribes to key events and normalizes payloads for reliable intro/outro handling.
   - Sends multi-format seek/play/pause commands for broader compatibility.
-- Fullscreen behavior refined:
+* Fullscreen behavior refined:
   - Removed global page click trigger that could hijack controls.
   - Fullscreen now activates on double‑click of the HTML5 video in the top page only.
-- Messaging reliability improvements:
+* Messaging reliability improvements:
   - Content script message listener is registered as early as possible.
   - Popup includes a one-time programmatic injection fallback and retry.
-- Manifest updates:
+* Manifest updates:
   - `all_frames: true` for content scripts, `match_origin_as_fallback: true`.
   - Added host permissions for common embed domains (e.g., `*.dailymotion.com`).
   - Added `scripting` permission for fallback injection.
 
-If intro/outro skipping does not work on non-Dailymotion providers (ok.ru, mega, rumble), they may require provider‑specific APIs similar to Dailymotion.
+**Note**: Intro/outro skipping works best with Dailymotion players. Other providers (ok.ru, mega, rumble) may require additional setup.
