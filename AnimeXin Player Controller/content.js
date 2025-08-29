@@ -30,9 +30,13 @@ class AnimeXinPlayerController {
     this.playerReady = false;
     this.serverPreferAttempted = false;
     this.userServerOverride = false;
+    this.serverLastAppliedValue = null;
+    this.serverApplyTimestamp = 0;
+    this.serverRefreshTimer = null;
     this.fullscreenRequested = false;
     this.isTopFrame = window.top === window;
     this.deferredFullscreen = false;
+    this.introSeekApplied = false;
     this.performanceMonitor = new PerformanceMonitor();
     this.errorReporter = new ErrorReporter();
     
@@ -173,6 +177,10 @@ class AnimeXinPlayerController {
         select.value = preferred.value;
         const evt = new Event('change', { bubbles: true });
         select.dispatchEvent(evt);
+        this.serverLastAppliedValue = preferred.value;
+        this.serverApplyTimestamp = Date.now();
+        if (this.serverRefreshTimer) clearTimeout(this.serverRefreshTimer);
+        this.serverRefreshTimer = setTimeout(() => this.refreshServerIfStuck(), 2000);
       }
       this.serverPreferAttempted = true;
     } catch (error) {
@@ -199,16 +207,75 @@ class AnimeXinPlayerController {
       
       if (match) return match;
 
-      // Priority 2: Hardsub English Ok.ru
+      // Priority 2: All Player Sub (often Dailymotion for older videos)
+      match = opts.find(o => {
+        const text = norm(o.textContent);
+        return text.includes('all player sub') && (text.includes('dailymotion') || true);
+      });
+
+      if (match) return match;
+
+      // Priority 3: Hardsub English Ok.ru
       match = opts.find(o => {
         const text = norm(o.textContent);
         return text.includes('hardsub') && text.includes('english') && 
                (text.includes('ok.ru') || text.includes('ok'));
       });
       
-      return match || null;
+      if (match) return match;
+
+      // Priority 4: Any Dailymotion
+      match = opts.find(o => norm(o.textContent).includes('dailymotion'));
+      if (match) return match;
+
+      return null;
     } catch (error) {
       this.errorReporter.reportError('Server option finding failed', error);
+      return null;
+    }
+  }
+
+  refreshServerIfStuck() {
+    try {
+      // If player is already present, do nothing
+      if (this.playerFrame || this.html5Video) return;
+
+      const select = document.querySelector('select.mirror');
+      if (!select || this.userServerOverride) return;
+
+      // If the value we set is still selected but no player, try toggling
+      const current = select.value;
+      if (this.serverLastAppliedValue && current === this.serverLastAppliedValue) {
+        const alt = this.findAlternateOption(select, this.serverLastAppliedValue);
+        if (alt) {
+          // Switch to alternate then switch back after a brief delay to force reload
+          select.value = alt.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          setTimeout(() => {
+            select.value = this.serverLastAppliedValue;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+          }, 500);
+        } else {
+          // No alternate, at least re-dispatch change
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+    } catch (error) {
+      this.errorReporter.reportError('Server refresh failed', error);
+    }
+  }
+
+  findAlternateOption(select, excludeValue) {
+    try {
+      const opts = Array.from(select.options || []);
+      const norm = (text) => {
+        if (!text || typeof text !== 'string') return '';
+        return text.toLowerCase().replace(/\s+/g, ' ').trim();
+      };
+      // Prefer switching to another Dailymotion or Ok option as alt
+      const alt = opts.find(o => o.value !== excludeValue && (norm(o.textContent).includes('dailymotion') || norm(o.textContent).includes('ok')));
+      return alt || opts.find(o => o.value !== excludeValue) || null;
+    } catch (_) {
       return null;
     }
   }
@@ -538,38 +605,7 @@ class AnimeXinPlayerController {
 
       // Skip intro if configured
       if (this.introSkipStart > 0) {
-        setTimeout(() => {
-          console.log(`Skipping intro to ${this.introSkipStart} seconds`);
-          this.seekTo(this.introSkipStart);
-          
-          // Provide user feedback
-          this.showUserNotification(`Skipped intro to ${this.formatTime(this.introSkipStart)}`);
-
-          // Best-effort fullscreen immediately after intro skip
-          setTimeout(() => {
-            this.requestFullscreen();
-          }, 150);
-          
-          // Best-effort unmute after intro skip via DM bridge or HTML5
-          setTimeout(() => {
-            try {
-              if (this.playerFrame && this.isDailymotionFrame()) {
-                this.playerFrame.contentWindow.postMessage({
-                  source: 'animexin-controller',
-                  type: 'dm_bridge_command',
-                  action: 'unmute',
-                  data: { volume: 1 }
-                }, '*');
-                console.log('Audio: unmute requested via DM bridge');
-              } else if (this.html5Video) {
-                this.html5Video.muted = false;
-                this.html5Video.volume = 1;
-                this.html5Video.play().catch(() => {});
-                console.log('Audio: unmuted HTML5 video');
-              }
-            } catch (_) {}
-          }, 250);
-        }, 800); // Give player time to load
+        this.scheduleIntroSkip();
       }
     } catch (error) {
       this.errorReporter.reportError('Play handling failed', error);
@@ -756,6 +792,21 @@ class AnimeXinPlayerController {
       const handler = () => {
         this.deferredFullscreen = false;
         console.log('FS: retry after gesture');
+        // Also unmute on the same gesture for a single-click experience
+        try {
+          if (this.playerFrame && this.isDailymotionFrame()) {
+            this.playerFrame.contentWindow.postMessage({
+              source: 'animexin-controller',
+              type: 'dm_bridge_command',
+              action: 'unmute',
+              data: { volume: 1 }
+            }, '*');
+          } else if (this.html5Video) {
+            this.html5Video.muted = false;
+            this.html5Video.volume = 1;
+            this.html5Video.play().catch(() => {});
+          }
+        } catch (_) {}
         this.requestFullscreen();
       };
       document.addEventListener('click', handler, { once: true, capture: true });
@@ -1004,10 +1055,79 @@ class AnimeXinPlayerController {
     try {
       this.sendPlayerCommand('get_duration');
       this.sendPlayerCommand('get_player_state');
+      // In case play event fires before player becomes seekable
+      if (this.isPlaying && this.introSkipStart > 0 && !this.introSeekApplied) {
+        this.scheduleIntroSkip();
+      }
     } catch (error) {
       this.errorReporter.reportError('Player listener attachment failed', error);
       this.retryWithBackoff(() => this.attachPlayerListeners());
     }
+  }
+
+  async scheduleIntroSkip() {
+    try {
+      if (this.introSeekApplied) return;
+      console.log('Intro: waiting for seekable...');
+      const ready = await this.waitUntilPlayerSeekable(10000);
+      if (!ready) {
+        console.log('Intro: timed out waiting for seekable');
+        return;
+      }
+      if (this.introSeekApplied) return;
+      this.introSeekApplied = true;
+      console.log(`Skipping intro to ${this.introSkipStart} seconds`);
+      this.seekTo(this.introSkipStart);
+      this.showUserNotification(`Skipped intro to ${this.formatTime(this.introSkipStart)}`);
+      // Try fullscreen shortly after seek
+      setTimeout(() => { this.requestFullscreen(); }, 150);
+      // Unmute shortly after seek
+      setTimeout(() => {
+        try {
+          if (this.playerFrame && this.isDailymotionFrame()) {
+            this.playerFrame.contentWindow.postMessage({
+              source: 'animexin-controller',
+              type: 'dm_bridge_command',
+              action: 'unmute',
+              data: { volume: 1 }
+            }, '*');
+            console.log('Audio: unmute requested via DM bridge');
+          } else if (this.html5Video) {
+            this.html5Video.muted = false;
+            this.html5Video.volume = 1;
+            this.html5Video.play().catch(() => {});
+            console.log('Audio: unmuted HTML5 video');
+          }
+        } catch (_) {}
+      }, 250);
+    } catch (error) {
+      this.errorReporter.reportError('Intro skip scheduling failed', error);
+    }
+  }
+
+  waitUntilPlayerSeekable(timeoutMs = 8000) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        try {
+          // HTML5 path
+          if (this.html5Video) {
+            const v = this.html5Video;
+            const hasMeta = v.readyState >= 1; // HAVE_METADATA
+            const hasDur = Number.isFinite(v.duration) && v.duration > 0;
+            const seekable = v.seekable && v.seekable.length > 0;
+            if (hasMeta && hasDur && seekable) return resolve(true);
+          }
+          // Dailymotion iframe path (via bridge or native)
+          if (this.playerFrame && this.isDailymotionFrame()) {
+            if (this.playerReady && this.duration > 0) return resolve(true);
+          }
+        } catch (_) {}
+        if (Date.now() - start >= timeoutMs) return resolve(false);
+        setTimeout(check, 200);
+      };
+      check();
+    });
   }
 
   // Removed global document click fullscreen arming to avoid hijacking controls
